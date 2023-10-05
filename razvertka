@@ -1,0 +1,227 @@
+# импорт необходимых блоков для работы
+# блок обработки видео
+import cv2  
+# блок обработки картинки
+from google.colab.patches import cv2_imshow
+# блок работы с массивами и тензорами
+import numpy as np
+# блок математической обработки данных
+import math
+# блок отрисовки изображений на основе массива данных
+from matplotlib import pyplot as plt
+# блок отсчета времени
+import time
+# блок загрузки-сохранения данных
+import pickle
+# программа вывода картинки в блокнот
+%matplotlib inline
+
+# функция поиска координат всех точек на векторе
+# на вход принимает стартовую точку вектора по осям х и у, точку конца вектора
+# по осям х и у и шаг отсчета
+def get_vector_points_2(start_x, start_y, target_x, target_y, step_point): 
+    #start = time.time()
+    points = []
+    x_end = target_x - start_x        # определяем длину вектора по оси х
+    y_end = target_y - start_y        # определяем длину вектора по оси у
+    step_x = x_end / step_point       # находим количество шагов по оси х
+    step_y = y_end / step_point       # находим количество шагов по оси у
+
+    for i in range(step_point + 1):   # по всей длине вектора собираем координаты точек
+        point_x = int(start_x + i * step_x)
+        point_y = int(start_y + i * step_y)
+        points.append((point_x, point_y))
+    #end = time.time()
+    #print('время на определение точек на векторе =', end-start,' сек')
+    return points                     # возвращает перечень координат
+    
+# функция определения центра изображения
+# принимает на вход картинку в виде массива данных
+def central(img):                     # из массива данных берем первые два параметра
+    width, height = img.shape[:2]     # ширину и высоту картинки  
+    line_horiz = int(width/2)         # определяем центр по вертикали
+    line_vert = int(height/2)         # определяем центр по горизонтали
+    start_horiz = line_horiz - 2      # вносим коррекцию для стартовой точки вектора
+    #max_fin_horiz = 4          
+    start_vert = line_vert - 2        # вносим коррекцию для стартовой точки вектора
+    #max_fin_vert = 4
+    return line_horiz, line_vert, start_horiz, start_vert  #max_fin_horiz, max_fin_vert    
+    
+# функция определения координат точек на окружности
+# принимает параметры радиуса, сентра окружности по х и у
+# и количества точек, для которых необходимо найти координаты 
+def find_circle_points(radius, center_x, center_y, num_points):
+    #start = time.time()
+    points = []                       # создадим список для координат
+    theta = 0                         # зададим параметр угла сдвига 
+
+    for _ in range(num_points):       # по количеству точек на окружности
+        x = center_x + radius * math.cos(math.radians(theta))# находим координату х
+        y = center_y + radius * math.sin(math.radians(theta))# находим координату у
+        points.append((x, y))         # добавляем найденные координаты в список
+        theta += 360 / num_points     # сдвигаем угол поиска на заданный параметр количества точек
+    
+    return points
+
+# функция преобразования и проверки параметров
+# принимает картинку
+def params(img):
+    width, height = img.shape[:2]
+    # определение координат центра картинки и стартовых координат для векторов сбора
+    line_horiz, line_vert, start_horiz, start_vert = central(img) 
+    # параметр внутреннего радиуса задан минимальным но больше единицы, 
+    # в другой версии задавался как контур черного круга в центре картинки
+    # и определялся отдельной функцией
+    radius = 2
+    # определяектся параметр наружного радиуса
+    max_radius = min(line_horiz, line_vert)
+    # проверка параметра наружного радиуса на корректность по ширине картинки
+    if max_radius+line_horiz >= width:
+       max_radius = width-line_horiz-1
+    # проверка параметра наружного радиуса на корректность по высоте картинки   
+    if max_radius+line_vert >= height:
+       max_radius = height-line_vert-1
+    # определение количества точек внутреннего и внешнего круга
+    min_num_points = int(2*np.pi*radius)
+    max_num_points = int(2*np.pi*max_radius)
+    # нахождение координат точек внутреннего и внешнего круга
+    min_points = find_circle_points(radius, line_horiz, line_vert, min_num_points)
+    max_points = find_circle_points(max_radius, line_horiz, line_vert, max_num_points)
+    # сборка всех найденных координат в массивы
+    min_p = np.asarray(min_points)
+    max_p = np.asarray(max_points)
+
+    return max_radius, radius, max_p, min_p
+
+# функция развертки одного кадра, принимает параметры значение большего 
+# радиуса развертки, значение меньшего (центрального) радиуса развертки
+# координаты точек на окружности большего и меньшего радиусов, картинку
+
+def cadr_3(max_radius, radius, max_circle_points, min_circle_points, img):
+  vect = []                                                     # создадим список точек на векторе
+  i_i = 0                                                       # зададим начальный параметр сдвига точки наружного круга
+  i_1 = max_circle_points.shape[0]//min_circle_points.shape[0]  # найдем целую часть сдвига точки без дробного остатка
+  i_0 = max_circle_points.shape[0]/min_circle_points.shape[0]   # найдем часть сдвига точки с дробным остатком
+  i_2 = i_0 - i_1                                               # вычислим значение дробного остатка
+  step_point = int(max_radius - radius)                         # определим количество дополнительных векторов
+  #step = 0                                                      # зададим счетчик шагов сдвига
+  sdvig = 0                                                     # зададим начальный параметр счетчика дробной части сдвига
+  for i in range(min_circle_points.shape[0]):                   # запускаем цикл по количеству точек внутреннего круга
+    for j in range (i_1):                                       # запускаем цикл на сдвиг параметров наружного круга
+      v = get_vector_points_2(min_circle_points[i][0],          # определяем точки на векторе от точки внутреннего к наружному кругу
+                              min_circle_points[i][1],
+                              max_circle_points[i_i][0],
+                              max_circle_points[i_i][1],
+                              step_point)
+      vect.append(v)                                            # параметры найденных точек на векторе добавляем в список
+      i_i += 1                                                  # увеличиваем значение счетчика точек на единицу
+    sdvig += i_2                                                # увеличиваем значение счетчика дробной части
+    if sdvig > 1 and i_i < max_circle_points.shape[0]-1:        # как только дробные части сдвига больше единицы добавляем точку наружного круга
+      v = get_vector_points_2(min_circle_points[i][0],
+                              min_circle_points[i][1],
+                              max_circle_points[i_i][0],
+                              max_circle_points[i_i][1],
+                              step_point)
+      vect.append(v)                                            # параметры найденных точек на векторе добавляем в список
+      i_i += 1                                                  # увеличиваем значение счетчика точек на единицу
+      sdvig -= 1                                                # значение счетчика дробной части уменьшаем на единицу
+      #step += 1                                                # счетчик шагов сдвига увеличиваем на единицу
+  # Определение размеров новой картинки
+  new_width = len(max(vect, key = len))
+  new_min = len(min(vect, key = len))
+  new_height = len(vect)
+  # Создание массива под новую картинку
+  cadro = np.zeros((new_width, new_height, 3), dtype=np.uint8)
+  # Заполнение новой картинки данными 
+  for i in range(cadro.shape[1]-1):
+    n = new_width - len(vect[i])
+    for j in range(len(vect[i])-1):
+      cadro[len(vect[i])-j-1, i] = img[vect[i][j][0], vect[i][j][1]]
+
+  return cadro
+
+# функция раскадровки по заданным параметрам кадров отрезка видео
+# требует путь к файлу видео, начальный кадр с которого начнется захват,
+# финальный кадр, на котором захват завершится и шаг захвата (захват каждого N-кадра)
+def rascadrovka_2(video_path, start_cadr, stop_cadr, step_cadr):
+  cap = cv2.VideoCapture(video_path)  # захват видеопотока
+  frame_count = 0                     # начало отсчета кадров
+  pic_all = []                        # массив для сохранения кадров
+  num_cadr = 0                        # счетчик захваченных кадров
+  # чтение и отображение кадров
+  while True:                         # пока видеопоток существует
+      ret, frame = cap.read()         # происходит считывание текущего кадра
+      if not ret:                     # если поток завершился
+          break                       # остановка программы
+      frame_count += 1                # увеличиваем счетчик кадров на единицу
+      if frame_count >= stop_cadr: break # останавливаемся если дошли до стопа
+      # выводим каждый кадр, определенный шагом
+      if frame_count >= start_cadr and frame_count % step_cadr == 0:
+        num_cadr += 1                 # увеличиваем счетчик захваченных кадров
+        #print(num_cadr)    # отладочная
+        #cv2_imshow(frame)  # отладочная          
+        pic_all.append(frame)         # добавляенм захваченный кадр к списку
+      # ожидание нажатия клавиши q для выхода, применяется при отладке для определения
+      # номера стоп-кадра и работе отладочных функций выше
+      if cv2.waitKey(1) & 0xFF == ord('q'):
+          break
+  # освобождение ресурсов
+  cap.release()
+  cv2.destroyAllWindows()
+
+  pic = np.array(pic_all)             # преобразуем изображения в массивы данных
+  del(pic_all)                        # освободим память от картинок
+  return pic                          # возвращаем массив захваченных кадров
+
+# финальная функция развертки видео
+# требует путь к файлу видео, начальный кадр с которого начнется захват,
+# финальный кадр, на котором захват завершится и шаг захвата (захват каждого N-кадра)
+def razvertka(video_path, start_cadr, stop_cadr, step_cadr):
+  pic = rascadrovka_2(video_path, start_cadr, stop_cadr, step_cadr)
+  print(f'к развертке принято {pic.shape[0]} кадров')
+  count_cadr = pic.shape[0]
+  razvert = []
+  st_1_c = time.time()
+  img = pic[1].copy()
+  max_radius, radius, max_p, min_p = params(img)
+  cadr = cadr_3(max_radius, radius, max_p, min_p, img)
+  st_1_e = time.time()
+  tm = st_1_e-st_1_c
+  print(f'среднее время обработки одного кадра {round(tm, 1)} секунд')
+  print(f'обработка всего массива займет примерно {round(tm*count_cadr, 1)} секунд')
+  st = time.time()
+  for i in range(count_cadr):
+    #print(i)
+    img = pic[i].copy()
+    max_radius, radius, max_p, min_p = params(img)
+    cadr = cadr_3(max_radius, radius, max_p, min_p, img)
+    razvert.append(cadr)
+  end = time.time()
+  print('фактическое время развертки ', len(razv), ' кадров составило ', round(end-st,1), ' сек')  
+  return razvert
+
+# параметры для развертки
+start_cadr = 100        # кадр с которого начнется захват кадров из видео
+stop_cadr = np.inf      # финальный кадр, на котором завершится захват видео (сейчас - конец ролика)
+step_cadr = 1000        # шаг, с которым будет захватытваться кадр
+video_path = "/content/Video-20230704T073315Z-001/Video/00000004.ASF" # путь к файлу
+
+razv = razvertka(video_path, start_cadr, stop_cadr, step_cadr)
+
+# сохранение массивов развернутых картинок
+file_path = '/content/drive/MyDrive/ndoscope/razv.pkl'
+with open(file_path, 'wb') as f:
+    pickle.dump(razv, f)
+
+# скачивание массивов сохраненных картинок
+with open(file_path, 'wb') as f:
+    pickle.dump(razv, f)
+
+# сохраним массивы как картинки для разметки
+
+for i in range(len(razv)):
+  file_path = f'/content/drive/MyDrive/ndoscope/picture_razv/prob_{i}.png'
+  img = razv[i]
+  cv2.imwrite(file_path, img)
+
+  
